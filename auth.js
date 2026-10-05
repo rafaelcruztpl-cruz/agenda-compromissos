@@ -1,82 +1,100 @@
 const session=require('express-session');
+const crypto=require('crypto');
 
 function norm(v){return String(v||'').trim().toLowerCase();}
 
-function buildUsers(){
-  return [
-    {username:norm(process.env.ADMIN_USERNAME||'rafael'),password:String(process.env.ADMIN_PASSWORD||''),role:'admin',displayName:'Rafael'},
-    {username:norm(process.env.OPERATOR_USERNAME||''),password:String(process.env.OPERATOR_PASSWORD||''),role:'operator',displayName:'Operador'},
-    {username:norm(process.env.READONLY_USERNAME||''),password:String(process.env.READONLY_PASSWORD||''),role:'read_only',displayName:'Consulta'}
-  ].filter(x=>x.username&&x.password);
+function hashPassword(password,salt=crypto.randomBytes(16).toString('hex')){
+  const hash=crypto.scryptSync(String(password),salt,64).toString('hex');
+  return salt+':'+hash;
 }
 
-function authConfigured(){return buildUsers().length>0}
+function verifyPassword(password,stored){
+  try{
+    const [salt,hex]=String(stored||'').split(':');
+    if(!salt||!hex)return false;
+    const actual=crypto.scryptSync(String(password),salt,64);
+    const expected=Buffer.from(hex,'hex');
+    return actual.length===expected.length&&crypto.timingSafeEqual(actual,expected);
+  }catch(e){return false}
+}
 
 function bootstrapUser(){
-  return {username:'bootstrap',role:'admin',displayName:'Administrador'};
+  return {id:0,username:'bootstrap',role:'admin',displayName:'Administrador'};
 }
 
-function installAuth(app){
+function installAuth(app,{pool,ensureDb}){
   app.set('trust proxy',1);
   app.use(session({
     secret:process.env.SESSION_SECRET||process.env.ADMIN_PASSWORD||'bootstrap-only',
     resave:false,
     saveUninitialized:false,
-    cookie:{
-      httpOnly:true,
-      sameSite:'lax',
-      secure:process.env.NODE_ENV==='production',
-      maxAge:12*60*60*1000
-    }
+    cookie:{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',maxAge:12*60*60*1000}
   }));
 
-  app.post('/api/auth/login',(req,res)=>{
-    if(!authConfigured()){
-      req.session.user=bootstrapUser();
-      return res.json({ok:true,user:req.session.user,bootstrap:true});
+  async function currentUser(req){
+    if(!pool){
+      const u=req.session.user;
+      return u||bootstrapUser();
     }
-    const u=norm(req.body.username),p=String(req.body.password||'');
-    const user=buildUsers().find(x=>x.username===u&&x.password===p);
-    if(!user)return res.status(401).json({error:'Usuário ou senha inválidos'});
-    req.session.user={
-      username:user.username,
-      role:user.role,
-      displayName:user.displayName
-    };
-    res.json({ok:true,user:req.session.user});
+    await ensureDb();
+    if(!req.session.userId)return null;
+    const q=await pool.query('SELECT id,username,display_name,role,active FROM app_users WHERE id=$1',[req.session.userId]);
+    const u=q.rows[0];
+    if(!u||!u.active)return null;
+    return {id:u.id,username:u.username,displayName:u.display_name,role:u.role};
+  }
+
+  app.post('/api/auth/login',async(req,res)=>{
+    try{
+      if(!pool){
+        req.session.user=bootstrapUser();
+        return res.json({ok:true,user:req.session.user,bootstrap:true});
+      }
+      await ensureDb();
+      const username=norm(req.body.username);
+      const q=await pool.query('SELECT * FROM app_users WHERE username=$1',[username]);
+      const u=q.rows[0];
+      if(!u||!u.active||!verifyPassword(req.body.password,u.password_hash)){
+        return res.status(401).json({error:'Usuário ou senha inválidos'});
+      }
+      req.session.userId=u.id;
+      res.json({ok:true,user:{id:u.id,username:u.username,displayName:u.display_name,role:u.role}});
+    }catch(e){res.status(500).json({error:'Falha ao entrar'})}
   });
 
   app.post('/api/auth/logout',(req,res)=>req.session.destroy(()=>res.json({ok:true})));
 
-  app.get('/api/auth/me',(req,res)=>{
-    if(!authConfigured()) return res.json(bootstrapUser());
-    if(!req.session.user)return res.status(401).json({error:'Não autenticado'});
-    res.json(req.session.user);
+  app.get('/api/auth/me',async(req,res)=>{
+    try{
+      const u=await currentUser(req);
+      if(!u)return res.status(401).json({error:'Não autenticado'});
+      res.json(u);
+    }catch(e){res.status(500).json({error:'Falha de autenticação'})}
   });
-}
 
-function apiAuth(req,res,next){
-  if(!authConfigured()){
-    req.session.user=bootstrapUser();
-    return next();
+  async function apiAuth(req,res,next){
+    try{
+      const u=await currentUser(req);
+      if(!u)return res.status(401).json({error:'Não autenticado'});
+      req.user=u;
+      next();
+    }catch(e){res.status(500).json({error:'Falha de autenticação'})}
   }
-  if(!req.session.user)return res.status(401).json({error:'Não autenticado'});
-  next();
-}
 
-function pageAuth(req,res,next){
-  if(!authConfigured()){
-    req.session.user=bootstrapUser();
-    return next();
+  async function pageAuth(req,res,next){
+    try{
+      const u=await currentUser(req);
+      if(!u)return res.redirect('/login');
+      req.user=u;
+      next();
+    }catch(e){res.redirect('/login')}
   }
-  if(!req.session.user)return res.redirect('/login');
-  next();
+
+  function allow(...roles){
+    return (req,res,next)=>roles.includes(req.user?.role)?next():res.status(403).json({error:'Acesso não autorizado'});
+  }
+
+  return {apiAuth,pageAuth,allow,hashPassword};
 }
 
-function allow(...roles){
-  return (req,res,next)=>roles.includes(req.session.user?.role)
-    ? next()
-    : res.status(403).json({error:'Acesso não autorizado'});
-}
-
-module.exports={installAuth,apiAuth,pageAuth,allow};
+module.exports={installAuth,hashPassword,norm};
