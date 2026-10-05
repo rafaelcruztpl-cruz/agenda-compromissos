@@ -6,7 +6,25 @@ const path = require('path');
 const app = express();
 app.use(express.json({ limit: '8mb' }));
 
+const IMPORT_VERSION = 'agenda-v12-2026-10-05';
+
 function loadSeed(){
+  try{
+    const statePath = path.join(__dirname, 'current_state.json');
+    if(fs.existsSync(statePath)){
+      const data = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      if(data && Array.isArray(data.events)){
+        return {
+          events: data.events,
+          rules: data.rules || {},
+          distributors: data.distributors || []
+        };
+      }
+    }
+  }catch(e){
+    console.error('Falha ao carregar current_state.json:', e.message);
+  }
+
   try{
     const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
     const marker = 'const DATA=';
@@ -37,13 +55,28 @@ async function ensureDb(){
     data jsonb NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT now()
   )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS app_imports (
+    version text PRIMARY KEY,
+    imported_at timestamptz NOT NULL DEFAULT now()
+  )`);
   await pool.query(`INSERT INTO app_state(id,data) VALUES('main',$1::jsonb) ON CONFLICT (id) DO NOTHING`, [JSON.stringify(seed)]);
+
+  const imported = await pool.query('SELECT 1 FROM app_imports WHERE version=$1', [IMPORT_VERSION]);
+  if(imported.rowCount === 0){
+    await pool.query(`UPDATE app_state SET data=$1::jsonb, updated_at=now() WHERE id='main'`, [JSON.stringify(seed)]);
+    await pool.query('INSERT INTO app_imports(version) VALUES($1)', [IMPORT_VERSION]);
+    console.log(`Base ${IMPORT_VERSION} importada com ${seed.events.length} eventos`);
+  }
 }
 
 app.get('/api/health', async (req,res)=>{
   try{
-    if(pool){ await ensureDb(); await pool.query('SELECT 1'); }
-    res.json({ok:true, storage:pool?'postgres':'memory', events:memoryState.events?.length || 0});
+    if(pool){
+      await ensureDb();
+      const q = await pool.query(`SELECT jsonb_array_length(data->'events') AS events, updated_at FROM app_state WHERE id='main'`);
+      return res.json({ok:true, storage:'postgres', events:Number(q.rows[0]?.events || 0), updatedAt:q.rows[0]?.updated_at || null});
+    }
+    res.json({ok:true, storage:'memory', events:memoryState.events?.length || 0});
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 
@@ -78,4 +111,4 @@ app.get('/', (req,res)=>res.sendFile(path.join(__dirname,'executive.html')));
 app.get('*', (req,res)=>res.sendFile(path.join(__dirname,'executive.html')));
 
 const port=process.env.PORT || 10000;
-app.listen(port, ()=>console.log(`Agenda online na porta ${port} com ${seed.events.length} eventos iniciais`));
+app.listen(port, ()=>console.log(`Agenda online na porta ${port} com ${seed.events.length} eventos no pacote atual`));
