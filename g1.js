@@ -6,5 +6,15 @@ function msg(t,e=false){$('msg').innerHTML='<div class="statusbar '+(e?'err':'')
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}function fmt(d){return d?d.split('-').reverse().join('/'):'Sem data'}function num(v){return Number(String(v||0).replace(/[^0-9,.-]/g,'').replace('.','').replace(',','.'))||0}function money(v){return v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
 async function load(){const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error('Falha ao carregar');state=await r.json();state.events=state.events||[];if(!state.rules||!Object.keys(state.rules).length)state.rules=structuredClone(defaultRules);if(!state.distributors||!state.distributors.length)state.distributors=structuredClone(defaultDists);await save();}
 async function save(){const r=await fetch('/api/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)});if(!r.ok)throw Error('Falha ao salvar')}
-function opts(a,all='Todos'){return '<option value="">'+all+'</option>'+a.map(v=>'<option>'+esc(v)+'</option>').join('')}function uniq(k){return [...new Set(state.events.map(e=>e[k]).filter(Boolean))].sort()}
-function fillFilters(){['dashExec','calExec','fExec'].forEach(id=>$(id).innerHTML=opts(uniq('executive')));$('fStatus').innerHTML=opts(uniq('status'));$('fType').innerHTML=opts(uniq('type'))}
+function opts(a,all='Todos'){return '<option value="">'+all+'</option>'+a.map(v=>'<option>'+esc(v)+'</option>').join('')}
+function uniq(k){return [...new Set(state.events.map(e=>e[k]).filter(Boolean))].sort()}
+function executiveList(){
+  const values=[
+    ...state.distributors.flatMap(d=>[d.executiveOmada,d.executiveVigi]),
+    ...state.events.map(e=>e.executive)
+  ].map(v=>String(v||'').trim()).filter(Boolean);
+  const byKey=new Map();
+  values.forEach(v=>{const k=v.toLocaleUpperCase('pt-BR');if(!byKey.has(k))byKey.set(k,v.toLocaleUpperCase('pt-BR'))});
+  return [...byKey.values()].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+}
+function fillFilters(){const execs=executiveList();['dashExec','calExec','fExec'].forEach(id=>$(id).innerHTML=opts(execs));$('fStatus').innerHTML=opts(uniq('status'));$('fType').innerHTML=opts(uniq('type'))}
