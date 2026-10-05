@@ -10,10 +10,10 @@ function buildUsers(){
   ].filter(x=>x.username&&x.password);
 }
 
-function installAuth(app){
+function authConfigured(){return buildUsers().length>0}\n\nfunction bootstrapUser(){return {username:'bootstrap',role:'admin',displayName:'Administrador'}}\n\nfunction installAuth(app){
   app.set('trust proxy',1);
   app.use(session({
-    secret:process.env.SESSION_SECRET||'change-me',
+    secret:process.env.SESSION_SECRET||process.env.ADMIN_PASSWORD||'bootstrap-only',
     resave:false,
     saveUninitialized:false,
     cookie:{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',maxAge:12*60*60*1000}
