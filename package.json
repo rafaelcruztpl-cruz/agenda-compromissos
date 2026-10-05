@@ -1,1 +1,1 @@
-{"name":"agenda-compromissos","version":"1.0.0","private":true,"scripts":{"start":"node server.js"},"dependencies":{"express":"^4.21.2","pg":"^8.13.1"}}
+{"name":"agenda-compromissos","version":"1.1.0","private":true,"scripts":{"start":"node server.js"},"dependencies":{"express":"^4.21.2","express-session":"^1.18.1","pg":"^8.13.1"}}
