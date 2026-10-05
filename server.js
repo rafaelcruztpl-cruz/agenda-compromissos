@@ -2,9 +2,12 @@ const express = require('express');
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const { installAuth, apiAuth, pageAuth, allow } = require('./auth');
 
 const app = express();
 app.use(express.json({ limit: '8mb' }));
+app.use(express.urlencoded({ extended: false }));
+installAuth(app);
 
 const IMPORT_VERSION = 'agenda-v12-2026-10-05';
 
@@ -23,19 +26,6 @@ function loadSeed(){
     }
   }catch(e){
     console.error('Falha ao carregar current_state.json:', e.message);
-  }
-
-  try{
-    const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-    const marker = 'const DATA=';
-    const start = html.indexOf(marker);
-    const end = html.indexOf(';\nconst $=', start);
-    if(start >= 0 && end > start){
-      const data = JSON.parse(html.slice(start + marker.length, end));
-      return {events:data.events || [], rules:{}, distributors:[]};
-    }
-  }catch(e){
-    console.error('Falha ao extrair seed do index:', e.message);
   }
   return {events:[], rules:{}, distributors:[]};
 }
@@ -69,10 +59,12 @@ async function ensureDb(){
   }
 }
 
+app.get('/login', (req,res)=>res.sendFile(path.join(__dirname,'login.html')));
+
 app.get('/api/health', async (req,res)=>{
   try{
+    await ensureDb();
     if(pool){
-      await ensureDb();
       const q = await pool.query(`SELECT jsonb_array_length(data->'events') AS events, updated_at FROM app_state WHERE id='main'`);
       return res.json({ok:true, storage:'postgres', events:Number(q.rows[0]?.events || 0), updatedAt:q.rows[0]?.updated_at || null});
     }
@@ -80,10 +72,10 @@ app.get('/api/health', async (req,res)=>{
   }catch(e){ res.status(500).json({ok:false,error:e.message}); }
 });
 
-app.get('/api/state', async (req,res)=>{
+app.get('/api/state', apiAuth, async (req,res)=>{
   try{
+    await ensureDb();
     if(pool){
-      await ensureDb();
       const q=await pool.query(`SELECT data FROM app_state WHERE id='main'`);
       return res.json(q.rows[0]?.data || seed);
     }
@@ -91,24 +83,39 @@ app.get('/api/state', async (req,res)=>{
   }catch(e){ res.status(500).json({error:'Falha ao carregar a base online'}); }
 });
 
-app.post('/api/state', async (req,res)=>{
+app.post('/api/state', apiAuth, allow('admin','operator'), async (req,res)=>{
   try{
-    const state=req.body;
-    if(!state || !Array.isArray(state.events)) return res.status(400).json({error:'Estado inválido'});
-    memoryState=state;
-    if(pool){
-      await ensureDb();
-      await pool.query(`INSERT INTO app_state(id,data,updated_at) VALUES('main',$1::jsonb,now())
-        ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`, [JSON.stringify(state)]);
+    await ensureDb();
+    let incoming=req.body;
+    if(!incoming || !Array.isArray(incoming.events)) return res.status(400).json({error:'Estado inválido'});
+
+    if(req.session.user.role==='operator'){
+      const current = pool
+        ? (await pool.query(`SELECT data FROM app_state WHERE id='main'`)).rows[0]?.data || seed
+        : memoryState;
+      incoming = {...current, events:incoming.events};
     }
-    res.json({ok:true, events:state.events.length, storage:pool?'postgres':'memory'});
+
+    memoryState=incoming;
+    if(pool){
+      await pool.query(`INSERT INTO app_state(id,data,updated_at) VALUES('main',$1::jsonb,now())
+        ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`, [JSON.stringify(incoming)]);
+    }
+    res.json({ok:true, events:incoming.events.length, storage:pool?'postgres':'memory'});
   }catch(e){ res.status(500).json({error:'Falha ao salvar a base online'}); }
 });
 
-app.use(express.static(__dirname, { extensions:['html'] }));
-app.get('/gestao', (req,res)=>res.sendFile(path.join(__dirname,'gestao.html')));
-app.get('/', (req,res)=>res.sendFile(path.join(__dirname,'executive.html')));
-app.get('*', (req,res)=>res.sendFile(path.join(__dirname,'executive.html')));
+app.get('/gestao', pageAuth, (req,res)=>{
+  if(req.session.user.role==='read_only') return res.redirect('/');
+  res.sendFile(path.join(__dirname,'gestao.html'));
+});
+app.get('/', pageAuth, (req,res)=>res.sendFile(path.join(__dirname,'executive.html')));
+
+for(const f of ['gestao.css','g1.js','g2.js','g3.js','g4.js']){
+  app.get('/'+f, pageAuth, (req,res)=>res.sendFile(path.join(__dirname,f)));
+}
+app.use(pageAuth, express.static(__dirname, { extensions:['html'] }));
+app.get('*', pageAuth, (req,res)=>res.sendFile(path.join(__dirname,'executive.html')));
 
 const port=process.env.PORT || 10000;
 app.listen(port, ()=>console.log(`Agenda online na porta ${port} com ${seed.events.length} eventos no pacote atual`));
