@@ -8,3 +8,59 @@ function openEdit(id){editing=id;const e=state.events.find(x=>x.id===id);$('edit
 function renderAll(){fillFilters();renderDash();renderCalendar();renderManage();renderPost();renderReports();renderRules();renderDists()}
 function showTab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.tab===id));if(id==='reports')renderReports();if(id==='calendar')renderCalendar()}
 function download(content,name,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([content],{type}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+
+let usersData=[];
+const roleLabel={admin:'Administrador',operator:'Operador',read_only:'Somente leitura'};
+
+async function loadUsers(){
+  if(!window.currentUser||window.currentUser.role!=='admin')return;
+  const r=await fetch('/api/users',{cache:'no-store'});
+  if(!r.ok){msg('Não foi possível carregar os usuários.',true);return}
+  usersData=await r.json();
+  renderUsers();
+}
+
+function renderUsers(){
+  if(!$('userRows'))return;
+  $('userRows').innerHTML=usersData.map(u=>'<tr>'+
+    '<td><input class="u-name" data-id="'+u.id+'" value="'+esc(u.displayName)+'"></td>'+
+    '<td><b>'+esc(u.username)+'</b></td>'+
+    '<td><select class="u-role" data-id="'+u.id+'">'+['read_only','operator','admin'].map(r=>'<option value="'+r+'" '+(u.role===r?'selected':'')+'>'+roleLabel[r]+'</option>').join('')+'</select></td>'+
+    '<td><select class="u-active" data-id="'+u.id+'"><option value="true" '+(u.active?'selected':'')+'>Ativo</option><option value="false" '+(!u.active?'selected':'')+'>Inativo</option></select></td>'+
+    '<td><input class="u-pass" data-id="'+u.id+'" type="password" placeholder="deixe vazio para manter"></td>'+
+    '<td><div class="rowactions"><button class="secondary u-save" data-id="'+u.id+'">Salvar</button><button class="danger u-del" data-id="'+u.id+'">Excluir</button></div></td>'+
+  '</tr>').join('');
+
+  document.querySelectorAll('.u-save').forEach(btn=>btn.onclick=async()=>{
+    const id=btn.dataset.id;
+    const name=document.querySelector('.u-name[data-id="'+id+'"]').value;
+    const role=document.querySelector('.u-role[data-id="'+id+'"]').value;
+    const active=document.querySelector('.u-active[data-id="'+id+'"]').value==='true';
+    const password=document.querySelector('.u-pass[data-id="'+id+'"]').value;
+    const r=await fetch('/api/users/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({displayName:name,role,active,password})});
+    const out=await r.json().catch(()=>({}));
+    if(!r.ok){msg(out.error||'Falha ao atualizar usuário.',true);return}
+    await loadUsers();msg('Usuário atualizado.');
+  });
+
+  document.querySelectorAll('.u-del').forEach(btn=>btn.onclick=async()=>{
+    const id=btn.dataset.id;
+    if(!confirm('Excluir este usuário?'))return;
+    const r=await fetch('/api/users/'+id,{method:'DELETE'});
+    const out=await r.json().catch(()=>({}));
+    if(!r.ok){msg(out.error||'Falha ao excluir usuário.',true);return}
+    await loadUsers();msg('Usuário excluído.');
+  });
+}
+
+async function createUser(){
+  const displayName=$('userName').value.trim();
+  const username=$('userLogin').value.trim();
+  const password=$('userPassword').value;
+  const role=$('userRole').value;
+  const r=await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({displayName,username,password,role})});
+  const out=await r.json().catch(()=>({}));
+  if(!r.ok){msg(out.error||'Falha ao criar usuário.',true);return}
+  $('userName').value='';$('userLogin').value='';$('userPassword').value='';$('userRole').value='read_only';
+  await loadUsers();msg('Usuário criado.');
+}
