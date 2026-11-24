@@ -10,6 +10,7 @@ app.use(express.urlencoded({ extended: false }));
 
 const IMPORT_VERSION = 'agenda-v12-2026-10-05';
 const USERS_IMPORT_VERSION = 'users-v1-2026-10-05';
+const ADMIN_PASSWORD_SYNC_VERSION = 'admin-password-sync-v2-2026-11-24';
 const CALENDAR_2027_IMPORT_VERSION = 'calendar-2027-v1-2026-11-23';
 
 const calendar2027Events = [
@@ -181,6 +182,17 @@ async function ensureDb(){
 
     await pool.query('INSERT INTO app_imports(version) VALUES($1)', [USERS_IMPORT_VERSION]);
     console.log(`Usuários iniciais migrados: ${initialUsers.length}`);
+  }
+
+  const adminPasswordSynced = await pool.query('SELECT 1 FROM app_imports WHERE version=$1', [ADMIN_PASSWORD_SYNC_VERSION]);
+  if(adminPasswordSynced.rowCount === 0 && process.env.ADMIN_PASSWORD){
+    const adminUsername=norm(process.env.ADMIN_USERNAME || 'rafael');
+    await pool.query(
+      `UPDATE app_users SET password_hash=$1,updated_at=now() WHERE username=$2 AND role='admin'`,
+      [hashPassword(process.env.ADMIN_PASSWORD),adminUsername]
+    );
+    await pool.query('INSERT INTO app_imports(version) VALUES($1)', [ADMIN_PASSWORD_SYNC_VERSION]);
+    console.log('Senha do administrador sincronizada com segurança.');
   }
 
   const calendarImported = await pool.query('SELECT 1 FROM app_imports WHERE version=$1', [CALENDAR_2027_IMPORT_VERSION]);
