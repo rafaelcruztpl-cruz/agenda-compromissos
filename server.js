@@ -10,6 +10,81 @@ app.use(express.urlencoded({ extended: false }));
 
 const IMPORT_VERSION = 'agenda-v12-2026-10-05';
 const USERS_IMPORT_VERSION = 'users-v1-2026-10-05';
+const CALENDAR_2027_IMPORT_VERSION = 'calendar-2027-v1-2026-11-23';
+
+const calendar2027Events = [
+  ['DICOMP','2027-02-18'],['DICOMP','2027-04-29'],['DICOMP','2027-08-05'],['DICOMP','2027-10-28'],
+  ['GMI','2027-02-25'],['GMI','2027-05-06'],['GMI','2027-08-12'],['GMI','2027-11-04'],
+  ['PAUTA','2027-03-04'],['PAUTA','2027-05-13'],['PAUTA','2027-08-19'],['PAUTA','2027-11-11'],
+  ['TEK','2027-03-11'],['TEK','2027-05-20'],['TEK','2027-08-26'],['TEK','2027-11-18'],
+  ['WDC','2027-03-18'],['WDC','2027-06-17'],['WDC','2027-09-02'],['WDC','2027-12-02']
+].map((x,i)=>({
+  id:'EVT-2027-CERT-'+String(i+1).padStart(2,'0'),
+  distributor:x[0],
+  type:'CERTIFICAÇÃO',
+  bu:'OMADA',
+  clientType:'',
+  city:'',
+  startDate:x[1],
+  endDate:x[1],
+  executive:'',
+  technical:'',
+  theme:'Certificação Omada — ciclo obrigatório',
+  status:'Em planejamento',
+  internalApproval:'Não iniciado',
+  clientExecution:'Não iniciado',
+  readiness:'Em atenção',
+  nextAction:'Confirmar modalidade, praça, trilha e instrutor.',
+  actionDeadline:'',
+  needsInvestment:'',
+  investmentSource:'',
+  requested:'',
+  approvedValue:'',
+  paidValue:'',
+  targetParticipants:'',
+  actualParticipants:'',
+  postEventStatus:'Não iniciado',
+  attendanceLink:'',
+  photosLink:'',
+  invoice:'',
+  nd:'',
+  claim:'',
+  results:'',
+  notes:'Data sugerida no planejamento 2027; confirmar com o distribuidor e o instrutor.',
+  prepRule:'D60_D45_D30_D15_D7',
+  sourceTag:'Agenda_Eventos_Distribuidores_2027'
+})).concat([
+  {
+    id:'EVT-2027-SECTOR-01',distributor:'',type:'EVENTO DO SETOR',bu:'VIGI',clientType:'',city:'São Paulo/SP',
+    startDate:'2027-06-08',endDate:'2027-06-10',executive:'',technical:'',theme:'Exposec',
+    status:'Em planejamento',internalApproval:'Não iniciado',clientExecution:'Não iniciado',readiness:'Em atenção',
+    nextAction:'Validar presença, formato e investimento.',actionDeadline:'',needsInvestment:'',investmentSource:'',
+    requested:'',approvedValue:'',paidValue:'',targetParticipants:'',actualParticipants:'',postEventStatus:'Não iniciado',
+    attendanceLink:'',photosLink:'',invoice:'',nd:'',claim:'',results:'',
+    notes:'Evento previsto de 08 a 10/06/2027. Participação ainda a confirmar.',
+    prepRule:'D60_D45_D30_D15_D7',sourceTag:'Agenda_Eventos_Distribuidores_2027'
+  },
+  {
+    id:'EVT-2027-SECTOR-02',distributor:'',type:'EVENTO DO SETOR',bu:'VIGI',clientType:'',city:'São Paulo/SP',
+    startDate:'2027-10-20',endDate:'2027-10-20',executive:'',technical:'',theme:'SegSummit',
+    status:'Em planejamento',internalApproval:'Não iniciado',clientExecution:'Não iniciado',readiness:'Em atenção',
+    nextAction:'Validar participação e investimento.',actionDeadline:'',needsInvestment:'',investmentSource:'',
+    requested:'',approvedValue:'',paidValue:'',targetParticipants:'',actualParticipants:'',postEventStatus:'Não iniciado',
+    attendanceLink:'',photosLink:'',invoice:'',nd:'',claim:'',results:'',
+    notes:'Data do evento prevista para 20/10/2027; participação ainda a confirmar.',
+    prepRule:'D60_D45_D30_D15_D7',sourceTag:'Agenda_Eventos_Distribuidores_2027'
+  },
+  {
+    id:'EVT-2027-CAMP-01',distributor:'',type:'CAMPANHA',bu:'VIGI',clientType:'',city:'',
+    startDate:'2027-07-30',endDate:'2027-07-30',executive:'',technical:'',theme:'Profissional de segurança eletrônica',
+    status:'Em planejamento',internalApproval:'Não iniciado',clientExecution:'Não iniciado',readiness:'Em atenção',
+    nextAction:'Definir mecânica, público e investimento.',actionDeadline:'',needsInvestment:'',investmentSource:'',
+    requested:'',approvedValue:'',paidValue:'',targetParticipants:'',actualParticipants:'',postEventStatus:'Não iniciado',
+    attendanceLink:'',photosLink:'',invoice:'',nd:'',claim:'',results:'',
+    notes:'Planejamento prevê 30/07/2027; avaliar integração com o VIGI Day de julho.',
+    prepRule:'D60_D45_D30_D15_D7',sourceTag:'Agenda_Eventos_Distribuidores_2027'
+  }
+]);
 
 function loadSeed(){
   try{
@@ -106,6 +181,33 @@ async function ensureDb(){
 
     await pool.query('INSERT INTO app_imports(version) VALUES($1)', [USERS_IMPORT_VERSION]);
     console.log(`Usuários iniciais migrados: ${initialUsers.length}`);
+  }
+
+  const calendarImported = await pool.query('SELECT 1 FROM app_imports WHERE version=$1', [CALENDAR_2027_IMPORT_VERSION]);
+  if(calendarImported.rowCount === 0){
+    const q = await pool.query(`SELECT data FROM app_state WHERE id='main'`);
+    const current = q.rows[0]?.data || seed;
+    current.events = Array.isArray(current.events) ? current.events : [];
+    current.distributors = Array.isArray(current.distributors) ? current.distributors : [];
+
+    const distMap = new Map(current.distributors.map(d=>[String(d.name||'').toUpperCase(),d]));
+    const existing = new Set(current.events.map(e=>e.id));
+
+    const additions = calendar2027Events
+      .filter(e=>!existing.has(e.id))
+      .map(e=>{
+        const d = distMap.get(String(e.distributor||'').toUpperCase());
+        return {
+          ...e,
+          executive:e.executive || d?.executiveOmada || (e.bu==='VIGI' ? d?.executiveVigi || '' : ''),
+          clientType:e.clientType || d?.category || ''
+        };
+      });
+
+    current.events.push(...additions);
+    await pool.query(`UPDATE app_state SET data=$1::jsonb, updated_at=now() WHERE id='main'`, [JSON.stringify(current)]);
+    await pool.query('INSERT INTO app_imports(version) VALUES($1)', [CALENDAR_2027_IMPORT_VERSION]);
+    console.log(`Calendário 2027 importado com ${additions.length} novos eventos`);
   }
 }
 
