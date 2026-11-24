@@ -21,6 +21,27 @@ function prepItems(e){
   ];
 }
 function eventLabel(e){return esc(e.distributor?e.distributor+' · '+e.type:(e.theme||e.type))}
+function slugType(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}
+function typeClass(e){
+  const t=slugType(e.type);
+  if(t.includes('certificacao'))return'type-cert';
+  if(t.includes('omada-day'))return'type-day';
+  if(t.includes('webinar'))return'type-webinar';
+  if(t.includes('workshop'))return'type-workshop';
+  if(t.includes('treinamento'))return'type-training';
+  if(t.includes('happy-hour'))return'type-happy';
+  if(t.includes('visita'))return'type-visit';
+  if(t.includes('evento-do-setor'))return'type-sector';
+  if(t.includes('campanha'))return'type-campaign';
+  return'type-other';
+}
+function prepClass(label){
+  if(label.startsWith('D-60'))return'prep-d60';
+  if(label.startsWith('D-45'))return'prep-d45';
+  if(label.startsWith('D-30'))return'prep-d30';
+  if(label.startsWith('D-15'))return'prep-d15';
+  return'prep-d7';
+}
 function renderCalendar(){
   const val=$('calMonth').value||new Date().toISOString().slice(0,7),[y,m]=val.split('-').map(Number),ex=$('calExec').value,bu=$('calBU').value;
   const first=new Date(y,m-1,1),last=new Date(y,m,0);
@@ -33,8 +54,8 @@ function renderCalendar(){
     const ev=base.filter(e=>e.startDate===ds);
     const prep=base.flatMap(e=>prepItems(e).filter(p=>p.date===ds).map(p=>({event:e,...p})));
     h+='<div class="day"><b>'+d+'</b>'+
-      prep.map(p=>'<div class="ev prep" data-id="'+p.event.id+'" title="'+esc(p.event.theme||p.event.type)+'">'+esc(p.label)+' · '+eventLabel(p.event)+'</div>').join('')+
-      ev.map(e=>'<div class="ev '+(readiness(e)==='Pronto'?'ready':(['Em risco','Bloqueado'].includes(readiness(e))?'risk':''))+'" data-id="'+e.id+'">'+eventLabel(e)+'</div>').join('')+
+      prep.map(p=>'<div class="ev prep '+prepClass(p.label)+'" data-id="'+p.event.id+'" title="'+esc(p.event.theme||p.event.type)+'">'+esc(p.label)+' · '+eventLabel(p.event)+'</div>').join('')+
+      ev.map(e=>'<div class="ev '+typeClass(e)+' '+(readiness(e)==='Pronto'?'ready':(['Em risco','Bloqueado'].includes(readiness(e))?'risk':''))+'" data-id="'+e.id+'">'+eventLabel(e)+'</div>').join('')+
       '</div>';
   }
   $('cal').innerHTML=h;
