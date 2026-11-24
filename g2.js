@@ -8,4 +8,35 @@ return '<label class="'+(['results','notes'].includes(k)?'span3':'')+'">'+l+c+'<
 function formObj(f){return Object.fromEntries(new FormData(f).entries())}
 function readiness(e){if(e.status==='Realizado'||e.status==='Concluído')return'Pronto';if(!e.startDate)return'Bloqueado';return e.readiness||'Em atenção'}
 function renderDash(){const ex=$('dashExec').value,bu=$('dashBU').value,a=state.events.filter(e=>(!ex||e.executive===ex)&&(!bu||e.bu===bu));const now=new Date(),end=new Date(now);end.setDate(end.getDate()+30);const upcoming=a.filter(e=>e.startDate&&new Date(e.startDate+'T12:00:00')>=new Date(now.toDateString())&&new Date(e.startDate+'T12:00:00')<=end);$('metrics').innerHTML=[[a.length,'Eventos'],[a.filter(e=>['Em risco','Bloqueado'].includes(readiness(e))).length,'Risco/Bloqueados'],[a.filter(e=>e.internalApproval!=='Aprovado'&&!['Realizado','Concluído','Cancelado'].includes(e.status)).length,'Aprovação pendente'],[a.filter(e=>readiness(e)==='Pronto').length,'Prontos'],[a.filter(e=>e.status==='Realizado'||e.status==='Concluído').length,'Realizados']].map(x=>'<div class="card"><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>').join('');const groups={'0–7 dias':[], '8–15 dias':[], '16–30 dias':[], 'Sem data':a.filter(e=>!e.startDate&&!['Realizado','Concluído','Cancelado'].includes(e.status))};upcoming.forEach(e=>{const d=Math.ceil((new Date(e.startDate+'T12:00:00')-now)/86400000);groups[d<=7?'0–7 dias':d<=15?'8–15 dias':'16–30 dias'].push(e)});$('next30').innerHTML=Object.entries(groups).map(([k,v])=>'<div class="lane"><b>'+k+'</b>'+v.slice(0,8).map(e=>'<div class="item"><b>'+esc(e.distributor)+'</b> · '+esc(e.type)+'<div class="muted">'+fmt(e.startDate)+' · '+esc(e.executive)+'</div></div>').join('')+(v.length?'':'<div class="muted" style="margin-top:8px">Sem eventos</div>')+'</div>').join('')}
-function renderCalendar(){const val=$('calMonth').value||new Date().toISOString().slice(0,7),[y,m]=val.split('-').map(Number),ex=$('calExec').value,bu=$('calBU').value;const first=new Date(y,m-1,1),last=new Date(y,m,0);$('calTitle').textContent=first.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});let h=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map(x=>'<div class="dow">'+x+'</div>').join('');for(let i=0;i<first.getDay();i++)h+='<div class="day"></div>';for(let d=1;d<=last.getDate();d++){const ds=y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');const ev=state.events.filter(e=>e.startDate===ds&&(!ex||e.executive===ex)&&(!bu||e.bu===bu));h+='<div class="day"><b>'+d+'</b>'+ev.map(e=>'<div class="ev '+(readiness(e)==='Pronto'?'ready':(['Em risco','Bloqueado'].includes(readiness(e))?'risk':''))+'" data-id="'+e.id+'">'+esc(e.distributor)+' · '+esc(e.type)+'</div>').join('')+'</div>'}$('cal').innerHTML=h;document.querySelectorAll('.ev').forEach(x=>x.onclick=()=>openEdit(x.dataset.id))}
+function shiftDate(date,days){const x=new Date(date+'T12:00:00');x.setDate(x.getDate()+days);return x.toISOString().slice(0,10)}
+function prepItems(e){
+  if(e.prepRule!=='D60_D45_D30_D15_D7'||!e.startDate)return[];
+  const resultBase=e.endDate||e.startDate;
+  return [
+    {date:shiftDate(e.startDate,-60),label:'D-60 Briefing'},
+    {date:shiftDate(e.startDate,-45),label:'D-45 Aprovação'},
+    {date:shiftDate(e.startDate,-30),label:'D-30 Produção'},
+    {date:shiftDate(e.startDate,-15),label:'D-15 Mobilização'},
+    {date:shiftDate(resultBase,7),label:'D+7 Resultado'}
+  ];
+}
+function eventLabel(e){return esc(e.distributor?e.distributor+' · '+e.type:(e.theme||e.type))}
+function renderCalendar(){
+  const val=$('calMonth').value||new Date().toISOString().slice(0,7),[y,m]=val.split('-').map(Number),ex=$('calExec').value,bu=$('calBU').value;
+  const first=new Date(y,m-1,1),last=new Date(y,m,0);
+  $('calTitle').textContent=first.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+  let h=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'].map(x=>'<div class="dow">'+x+'</div>').join('');
+  for(let i=0;i<first.getDay();i++)h+='<div class="day"></div>';
+  for(let d=1;d<=last.getDate();d++){
+    const ds=y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    const base=state.events.filter(e=>(!ex||e.executive===ex)&&(!bu||e.bu===bu));
+    const ev=base.filter(e=>e.startDate===ds);
+    const prep=base.flatMap(e=>prepItems(e).filter(p=>p.date===ds).map(p=>({event:e,...p})));
+    h+='<div class="day"><b>'+d+'</b>'+
+      prep.map(p=>'<div class="ev prep" data-id="'+p.event.id+'" title="'+esc(p.event.theme||p.event.type)+'">'+esc(p.label)+' · '+eventLabel(p.event)+'</div>').join('')+
+      ev.map(e=>'<div class="ev '+(readiness(e)==='Pronto'?'ready':(['Em risco','Bloqueado'].includes(readiness(e))?'risk':''))+'" data-id="'+e.id+'">'+eventLabel(e)+'</div>').join('')+
+      '</div>';
+  }
+  $('cal').innerHTML=h;
+  document.querySelectorAll('.ev').forEach(x=>x.onclick=()=>openEdit(x.dataset.id));
+}
