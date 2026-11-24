@@ -21,6 +21,13 @@ function verifyPassword(password,stored){
 function bootstrapUser(){
   return {id:0,username:'bootstrap',role:'admin',displayName:'Administrador'};
 }
+function envUsers(){
+  return [
+    {username:norm(process.env.ADMIN_USERNAME||'rafael'),password:String(process.env.ADMIN_PASSWORD||''),role:'admin',displayName:'Rafael'},
+    {username:norm(process.env.OPERATOR_USERNAME||''),password:String(process.env.OPERATOR_PASSWORD||''),role:'operator',displayName:'Operador'},
+    {username:norm(process.env.READONLY_USERNAME||''),password:String(process.env.READONLY_PASSWORD||''),role:'read_only',displayName:norm(process.env.READONLY_USERNAME)==='diego'?'Diego':'Consulta'}
+  ].filter(u=>u.username&&u.password);
+}
 
 function installAuth(app,{pool,ensureDb}){
   app.set('trust proxy',1);
@@ -32,33 +39,39 @@ function installAuth(app,{pool,ensureDb}){
   }));
 
   async function currentUser(req){
-    if(!pool){
-      const u=req.session.user;
-      return u||bootstrapUser();
+    if(req.session.user)return req.session.user;
+    if(!pool)return null;
+    try{
+      await ensureDb();
+      if(!req.session.userId)return null;
+      const q=await pool.query('SELECT id,username,display_name,role,active FROM app_users WHERE id=$1',[req.session.userId]);
+      const u=q.rows[0];
+      if(!u||!u.active)return null;
+      return {id:u.id,username:u.username,displayName:u.display_name,role:u.role};
+    }catch(e){
+      return null;
     }
-    await ensureDb();
-    if(!req.session.userId)return null;
-    const q=await pool.query('SELECT id,username,display_name,role,active FROM app_users WHERE id=$1',[req.session.userId]);
-    const u=q.rows[0];
-    if(!u||!u.active)return null;
-    return {id:u.id,username:u.username,displayName:u.display_name,role:u.role};
   }
 
   app.post('/api/auth/login',async(req,res)=>{
     try{
-      if(!pool){
-        req.session.user=bootstrapUser();
-        return res.json({ok:true,user:req.session.user,bootstrap:true});
-      }
-      await ensureDb();
       const username=norm(req.body.username);
-      const q=await pool.query('SELECT * FROM app_users WHERE username=$1',[username]);
-      const u=q.rows[0];
-      if(!u||!u.active||!verifyPassword(req.body.password,u.password_hash)){
-        return res.status(401).json({error:'Usuário ou senha inválidos'});
+      const password=String(req.body.password||'');
+      if(pool){
+        try{
+          await ensureDb();
+          const q=await pool.query('SELECT * FROM app_users WHERE username=$1',[username]);
+          const u=q.rows[0];
+          if(u&&u.active&&verifyPassword(password,u.password_hash)){
+            req.session.userId=u.id;
+            return res.json({ok:true,user:{id:u.id,username:u.username,displayName:u.display_name,role:u.role}});
+          }
+        }catch(e){}
       }
-      req.session.userId=u.id;
-      res.json({ok:true,user:{id:u.id,username:u.username,displayName:u.display_name,role:u.role}});
+      const envUser=envUsers().find(u=>u.username===username&&u.password===password);
+      if(!envUser)return res.status(401).json({error:'Usuário ou senha inválidos'});
+      req.session.user={username:envUser.username,role:envUser.role,displayName:envUser.displayName};
+      res.json({ok:true,user:req.session.user,fallback:true});
     }catch(e){res.status(500).json({error:'Falha ao entrar'})}
   });
 
