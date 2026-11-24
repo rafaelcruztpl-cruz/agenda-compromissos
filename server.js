@@ -109,6 +109,7 @@ function loadSeed(){
 const seed = loadSeed();
 let memoryState = seed;
 
+
 const pool = process.env.DATABASE_URL ? new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false }
@@ -240,10 +241,14 @@ app.get('/api/health', async (req,res)=>{
 
 app.get('/api/state', apiAuth, async (req,res)=>{
   try{
-    await ensureDb();
     if(pool){
-      const q=await pool.query(`SELECT data FROM app_state WHERE id='main'`);
-      return res.json(q.rows[0]?.data || seed);
+      try{
+        await ensureDb();
+        const q=await pool.query(`SELECT data FROM app_state WHERE id='main'`);
+        return res.json(q.rows[0]?.data || memoryState);
+      }catch(e){
+        console.error('Postgres indisponível; usando memória:',e.message);
+      }
     }
     res.json(memoryState);
   }catch(e){ res.status(500).json({error:'Falha ao carregar a base online'}); }
@@ -251,23 +256,33 @@ app.get('/api/state', apiAuth, async (req,res)=>{
 
 app.post('/api/state', apiAuth, allow('admin','operator'), async (req,res)=>{
   try{
-    await ensureDb();
     let incoming=req.body;
     if(!incoming || !Array.isArray(incoming.events)) return res.status(400).json({error:'Estado inválido'});
 
     if(req.user.role==='operator'){
-      const current = pool
-        ? (await pool.query(`SELECT data FROM app_state WHERE id='main'`)).rows[0]?.data || seed
-        : memoryState;
+      let current=memoryState;
+      if(pool){
+        try{
+          await ensureDb();
+          current=(await pool.query(`SELECT data FROM app_state WHERE id='main'`)).rows[0]?.data || memoryState;
+        }catch(e){}
+      }
       incoming = {...current, events:incoming.events};
     }
 
     memoryState=incoming;
+    let storage='memory';
     if(pool){
-      await pool.query(`INSERT INTO app_state(id,data,updated_at) VALUES('main',$1::jsonb,now())
-        ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`, [JSON.stringify(incoming)]);
+      try{
+        await ensureDb();
+        await pool.query(`INSERT INTO app_state(id,data,updated_at) VALUES('main',$1::jsonb,now())
+          ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()`, [JSON.stringify(incoming)]);
+        storage='postgres';
+      }catch(e){
+        console.error('Falha ao salvar no Postgres; mantido em memória:',e.message);
+      }
     }
-    res.json({ok:true, events:incoming.events.length, storage:pool?'postgres':'memory'});
+    res.json({ok:true, events:incoming.events.length, storage});
   }catch(e){ res.status(500).json({error:'Falha ao salvar a base online'}); }
 });
 
