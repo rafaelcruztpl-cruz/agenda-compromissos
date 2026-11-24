@@ -7,7 +7,42 @@ else c='<input name="'+k+'" type="'+t+'" value="'+esc(v[k])+'">';
 return '<label class="'+(['results','notes'].includes(k)?'span3':'')+'">'+l+c+'</label>'}).join('')}
 function formObj(f){return Object.fromEntries(new FormData(f).entries())}
 function readiness(e){if(e.status==='Realizado'||e.status==='Concluído')return'Pronto';if(!e.startDate)return'Bloqueado';return e.readiness||'Em atenção'}
-function renderDash(){const ex=$('dashExec').value,bu=$('dashBU').value,a=state.events.filter(e=>(!ex||e.executive===ex)&&(!bu||e.bu===bu));const now=new Date(),end=new Date(now);end.setDate(end.getDate()+30);const upcoming=a.filter(e=>e.startDate&&new Date(e.startDate+'T12:00:00')>=new Date(now.toDateString())&&new Date(e.startDate+'T12:00:00')<=end);$('metrics').innerHTML=[[a.length,'Eventos'],[a.filter(e=>['Em risco','Bloqueado'].includes(readiness(e))).length,'Risco/Bloqueados'],[a.filter(e=>e.internalApproval!=='Aprovado'&&!['Realizado','Concluído','Cancelado'].includes(e.status)).length,'Aprovação pendente'],[a.filter(e=>readiness(e)==='Pronto').length,'Prontos'],[a.filter(e=>e.status==='Realizado'||e.status==='Concluído').length,'Realizados']].map(x=>'<div class="card"><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>').join('');const groups={'0–7 dias':[], '8–15 dias':[], '16–30 dias':[], 'Sem data':a.filter(e=>!e.startDate&&!['Realizado','Concluído','Cancelado'].includes(e.status))};upcoming.forEach(e=>{const d=Math.ceil((new Date(e.startDate+'T12:00:00')-now)/86400000);groups[d<=7?'0–7 dias':d<=15?'8–15 dias':'16–30 dias'].push(e)});$('next30').innerHTML=Object.entries(groups).map(([k,v])=>'<div class="lane"><b>'+k+'</b>'+v.slice(0,8).map(e=>'<div class="item"><b>'+esc(e.distributor)+'</b> · '+esc(e.type)+'<div class="muted">'+fmt(e.startDate)+' · '+esc(e.executive)+'</div></div>').join('')+(v.length?'':'<div class="muted" style="margin-top:8px">Sem eventos</div>')+'</div>').join('')}
+function daysUntil(date){
+  if(!date)return null;
+  const now=new Date();now.setHours(12,0,0,0);
+  const target=new Date(date+'T12:00:00');
+  return Math.ceil((target-now)/86400000);
+}
+function prepStatus(e){
+  const d=daysUntil(e.startDate);
+  if(d===null)return {label:'Sem data',stage:'Definir data',next:'Definir data',nextDate:'',level:'neutral'};
+  if(d<0)return {label:'Evento realizado/passado',stage:'Pós-evento',next:'Resultado / fechamento',nextDate:e.endDate?shiftDate(e.endDate,7):shiftDate(e.startDate,7),level:'done'};
+  let stage='Planejamento inicial',next='Briefing',nextDate=shiftDate(e.startDate,-60),level='ok';
+  if(d<=60){stage='Briefing';next='Aprovação';nextDate=shiftDate(e.startDate,-45);level='watch'}
+  if(d<=45){stage='Aprovação';next='Produção';nextDate=shiftDate(e.startDate,-30);level='watch'}
+  if(d<=30){stage='Produção';next='Mobilização';nextDate=shiftDate(e.startDate,-15);level='attention'}
+  if(d<=15){stage='Mobilização';next='Execução';nextDate=e.startDate;level='critical'}
+  if(d<=7){stage='Execução próxima';next='Evento';nextDate=e.startDate;level='critical'}
+  if(d===0){stage='Hoje';next='Execução';nextDate=e.startDate;level='critical'}
+  return {label:d===0?'Hoje':('Faltam '+d+' dias'),stage,next,nextDate,level};
+}
+function alertEventTitle(e){return esc(e.distributor?e.distributor+' · '+e.type:(e.theme||e.type))}
+function renderPrepAlerts(list){
+  if(!$('prepAlerts'))return;
+  const active=list.filter(e=>e.startDate&&!['Realizado','Concluído','Cancelado'].includes(e.status))
+    .sort((a,b)=>a.startDate.localeCompare(b.startDate))
+    .slice(0,10);
+  $('prepAlerts').innerHTML=active.length?active.map(e=>{
+    const p=prepStatus(e);
+    return '<div class="prep-card '+p.level+'" data-id="'+e.id+'">'+
+      '<div class="prep-top"><div><b>'+alertEventTitle(e)+'</b><div class="muted">'+esc(e.theme||'')+(e.city?' · '+esc(e.city):'')+'</div></div><span class="countdown">'+esc(p.label)+'</span></div>'+
+      '<div class="prep-grid"><div><small>Etapa atual</small><strong>'+esc(p.stage)+'</strong></div><div><small>Próximo marco</small><strong>'+esc(p.next)+'</strong><span>'+fmt(p.nextDate)+'</span></div><div><small>Responsável</small><strong>'+esc(e.executive||e.technical||'A definir')+'</strong></div><div><small>Status</small><strong>'+esc(e.status||'Em planejamento')+'</strong></div></div>'+
+      (e.nextAction?'<div class="prep-action"><b>Próxima ação:</b> '+esc(e.nextAction)+(e.actionDeadline?' · prazo '+fmt(e.actionDeadline):'')+'</div>':'')+
+    '</div>';
+  }).join(''):'<div class="muted">Nenhum evento futuro com data definida.</div>';
+  document.querySelectorAll('.prep-card').forEach(x=>x.onclick=()=>openEdit(x.dataset.id));
+}
+function renderDash(){const ex=$('dashExec').value,bu=$('dashBU').value,a=state.events.filter(e=>(!ex||e.executive===ex)&&(!bu||e.bu===bu));const now=new Date(),end=new Date(now);end.setDate(end.getDate()+30);const upcoming=a.filter(e=>e.startDate&&new Date(e.startDate+'T12:00:00')>=new Date(now.toDateString())&&new Date(e.startDate+'T12:00:00')<=end);$('metrics').innerHTML=[[a.length,'Eventos'],[a.filter(e=>['Em risco','Bloqueado'].includes(readiness(e))).length,'Risco/Bloqueados'],[a.filter(e=>e.internalApproval!=='Aprovado'&&!['Realizado','Concluído','Cancelado'].includes(e.status)).length,'Aprovação pendente'],[a.filter(e=>readiness(e)==='Pronto').length,'Prontos'],[a.filter(e=>e.status==='Realizado'||e.status==='Concluído').length,'Realizados']].map(x=>'<div class="card"><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>').join('');renderPrepAlerts(a);const groups={'0–7 dias':[], '8–15 dias':[], '16–30 dias':[], 'Sem data':a.filter(e=>!e.startDate&&!['Realizado','Concluído','Cancelado'].includes(e.status))};upcoming.forEach(e=>{const d=Math.ceil((new Date(e.startDate+'T12:00:00')-now)/86400000);groups[d<=7?'0–7 dias':d<=15?'8–15 dias':'16–30 dias'].push(e)});$('next30').innerHTML=Object.entries(groups).map(([k,v])=>'<div class="lane"><b>'+k+'</b>'+v.slice(0,8).map(e=>{const p=prepStatus(e);return '<div class="item"><b>'+alertEventTitle(e)+'</b><div class="muted">'+fmt(e.startDate)+' · '+esc(e.executive)+'</div><div class="mini-count '+p.level+'">'+esc(p.label)+' · '+esc(p.stage)+'</div></div>'}).join('')+(v.length?'':'<div class="muted" style="margin-top:8px">Sem eventos</div>')+'</div>').join('')}
 function shiftDate(date,days){const x=new Date(date+'T12:00:00');x.setDate(x.getDate()+days);return x.toISOString().slice(0,10)}
 function prepItems(e){
   if(e.prepRule!=='D60_D45_D30_D15_D7'||!e.startDate)return[];
